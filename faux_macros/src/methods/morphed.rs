@@ -170,6 +170,10 @@ impl<'a> Signature<'a> {
             proxy_real = wrapped_self;
         }
 
+        if self.is_async {
+            proxy_real = quote! { async { #proxy_real }};
+        }
+
         let ret = match &self.method_data {
             // not stubbable
             // proxy to real associated function
@@ -215,9 +219,12 @@ impl<'a> Signature<'a> {
                     }
                 };
 
-                method_data
-                    .receiver
-                    .method_body(real_self, proxy_real, call_stub)?
+                method_data.receiver.method_body(
+                    real_self,
+                    proxy_real,
+                    call_stub,
+                    self.is_async,
+                )?
             }
         };
 

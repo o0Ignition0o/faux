@@ -41,6 +41,7 @@ impl Receiver {
         self_type: SelfType,
         proxy_real: TokenStream,
         call_stub: TokenStream,
+        is_async: bool,
     ) -> darling::Result<syn::Expr> {
         let get_self = match &self.kind {
             SelfKind::Owned
@@ -164,11 +165,39 @@ impl Receiver {
             }
         };
 
-        Ok(syn::parse_quote! {
-            match #get_self {
-                Self(faux::MaybeFaux::Real(_maybe_faux_real)) => { #proxy_real },
-                Self(faux::MaybeFaux::Faux(_maybe_faux_faux)) => { #call_stub },
+        let maybe_async_return = if is_async {
+            quote! { async { res.await } }
+        } else {
+            quote! { res }
+        };
+
+        let stub_call = if is_async {
+            quote! {
+                let stub_call_result = {
+                    #call_stub
+                };
+                futures::future::Either::Right(
+                    futures::future::ready(stub_call_result)
+                )
             }
+        } else {
+            quote! { #call_stub }
+        };
+
+        let proxy_real = if is_async {
+            quote! { futures::future::Either::Left(#proxy_real)}
+        } else {
+            proxy_real
+        };
+
+        Ok(syn::parse_quote! {
+        {
+            let res = match #get_self {
+                Self(faux::MaybeFaux::Real(_maybe_faux_real)) => { #proxy_real },
+                Self(faux::MaybeFaux::Faux(_maybe_faux_faux)) => { #stub_call },
+            };
+            #maybe_async_return
+        }
         })
     }
 }

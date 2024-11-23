@@ -4,8 +4,9 @@ mod receiver;
 use crate::{create, self_type::SelfType};
 use darling::FromMeta;
 use morphed::Signature;
+use proc_macro2::Span;
 use quote::quote;
-use syn::PathArguments;
+use syn::{ImplItemFn, Lifetime, PathArguments, ReturnType};
 
 #[derive(Default, FromMeta)]
 #[darling(default)]
@@ -72,6 +73,8 @@ impl Mockable {
             if let Some(methods) = signature.create_when() {
                 when_methods.extend(methods.into_iter().map(syn::ImplItem::Fn));
             }
+            desugar_async(func);
+            func.attrs.push(syn::parse_quote! { #[track_caller] });
         }
 
         let generics = match &morphed_ty.path.segments.last().unwrap().arguments {
@@ -289,4 +292,37 @@ fn normalize_idents(signature: &mut syn::Signature) {
                 })
             }
         });
+}
+
+/// desugar_async turns async functions
+/// into functions that return an async impl block
+///
+/// This allows us to track the relevant caller in case
+/// mocks are used.
+/// eg:
+/// `async fn fetch(&self) -> u32`
+///  becomes
+/// `fn fetch(&self) -> impl Future<Output = i32> + use<'_>`
+fn desugar_async(func: &mut ImplItemFn) {
+    if func.sig.asyncness.take().is_none() {
+        return;
+    }
+
+    let previous_return_type = &func.sig.output;
+    let mut new_return_type = if let ReturnType::Type(_, ty) = previous_return_type {
+        quote! { -> impl std::future::Future<Output = #ty> }
+    } else {
+        quote! { -> impl std::future::Future<Output = ()> }
+    };
+
+    if let Some(receiver) = func.sig.receiver() {
+        if let Some((_, l)) = &receiver.reference {
+            let lifetime = l
+                .clone()
+                .unwrap_or_else(|| Lifetime::new("'_", Span::call_site()));
+            new_return_type.extend(quote! { + use< #lifetime >});
+        }
+    }
+
+    func.sig.output = syn::parse_quote!(#new_return_type);
 }

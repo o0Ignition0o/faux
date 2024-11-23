@@ -994,6 +994,7 @@ impl Faux {
     ///
     /// Do *NOT* call this function directly.
     /// This should only be called by the generated code from #[faux::methods]
+    #[track_caller]
     pub unsafe fn call_stub<R, I, O>(
         &self,
         id: fn(R, I) -> O,

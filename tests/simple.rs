@@ -69,8 +69,35 @@ fn faux_ref_output() {
 }
 
 #[test]
-#[should_panic]
+#[should_panic(expected = "`Foo::get_stuff` was called but never stubbed")]
 fn unmocked_faux_panics() {
     let mock = Foo::faux();
     mock.get_stuff();
+}
+
+#[test]
+fn unmocked_faux_should_track_caller_location() {
+    use std::panic;
+    use std::sync::{Arc, Mutex};
+
+    let mock = Foo::faux();
+
+    let panic_location = Arc::new(Mutex::new(None));
+    let cloned = Arc::clone(&panic_location);
+
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |info| {
+        let mut panic_location = cloned.lock().unwrap();
+        let location = info.location().unwrap();
+        *panic_location = Some(location.to_string());
+    }));
+
+    let _ = panic::catch_unwind(|| mock.get_stuff());
+
+    panic::set_hook(prev_hook);
+
+    assert_eq!(
+        "tests/simple.rs:95:41",
+        panic_location.lock().unwrap().take().unwrap()
+    );
 }
